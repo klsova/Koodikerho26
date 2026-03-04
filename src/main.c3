@@ -1,125 +1,180 @@
-module working_title;
-import raylib5;
+module orm;
 import std::io;
+import std::collections::list;
+import std::math::random;
+import raylib5;
 
-const int SCREENW = 1280;   // Ikkunan leveys
-const int SCREENH = 720;    // Ikkunan korkeus
+const int SCREENSIZE = 600;
+const int CELLCOUNT  = 20;
+const int CELLSIZE	 = SCREENSIZE / CELLCOUNT;
+const float TICKRATE = 10;
 
-// Nimetään tyyppi "float[<2>]" uudestaan. "Vec2" on kivempi kirjoittaa.
-typedef Vec2 = float[<2>];
 
-/*
-Globaalin "state" -muuttujan tyyppi.
-Tänne täytyy listata kaikki, mitä halutaan tallettaa
-state-muuttujaan.
-*/
-struct State
+enum Direction
 {
-	Player		player;
-	Texture2D	map;
+	UP,
+	DOWN,
+	LEFT,
+	RIGHT,
 }
 
-/*
-Globaali muuttuja "state" pitää sisällään kaiken sellaisen data,
-jota halutaan pitää frame-rajojen yli (lifetime = koko ohjelma).
-*/
-State state = {
-    .player = {
-        .position = {SCREENW/2, SCREENH/2},
-        .speed    = 500
-    },
+alias Vec2 = int[<2>];
+alias Body = List {Vec2};
+
+struct Snake
+{
+	Direction dir;
+	Body	  body;
+}
+
+struct Food
+{
+	Vec2 pos;
+	int index;
+}
+
+Food food = {
+	.pos = {10, 10},
+	.index = 0
 };
 
-/*
-Koko ohjelman main-funktio. Suoritus alkaa täältä ja päättyy tänne.
-*/
+float time_since_tick;
+Direction new_dir;
+
+struct Assets
+{
+	Texture2D[4] fruits;
+	Texture2D    tile;
+}
+
 fn int main(String[] args)
 {
-    init();
+	rl::initWindow(SCREENSIZE, SCREENSIZE, "ORM");
+	rl::setTargetFPS(240);
+
+	Snake snake;
+	snake.body.init_with_array(mem, {
+		{4, 10},
+		{5, 10},
+		{6, 10},
+	});
+	snake.dir = LEFT;
+
+	Assets assets;
+	assets.fruits[0] = rl::loadTexture("resources/apple.png");
+	assets.fruits[1] = rl::loadTexture("resources/banana.png");
+	assets.fruits[2] = rl::loadTexture("resources/grape.png");
+	assets.fruits[3] = rl::loadTexture("resources/orange.png");
+	assets.tile      = rl::loadTexture("resources/greytile.png");
 
 	while (!rl::windowShouldClose())
-	{	
-		update();
-		draw();
+	{
+		time_since_tick += rl::getFrameTime();
+		if (!update(&snake)) break;
+		draw(snake, assets);
 	}
-
-    exit();
+	io::printn("Game over");
 	return 0;
 }
 
-/*
-Suoritetaan kerran ohjelman alussa
-*/
-fn void init()
+// returns: boolean indicating if game should continue
+fn bool update(Snake* snake)
 {
-	rl::setTraceLogLevel(rl::TraceLogLevel.INFO);
-	rl::setConfigFlags(rl::FLAG_VSYNC_HINT);
-	rl::initWindow(SCREENW, SCREENH, "Working title");
+	if (rl::isKeyDown(rl::KEY_W) && snake.dir != DOWN)  new_dir = UP;
+	if (rl::isKeyDown(rl::KEY_S) && snake.dir != UP)    new_dir = DOWN;
+	if (rl::isKeyDown(rl::KEY_A) && snake.dir != RIGHT) new_dir = LEFT;
+	if (rl::isKeyDown(rl::KEY_D) && snake.dir != LEFT)  new_dir = RIGHT;
 
-	// Ladataan kartta
-	Texture2D map = rl::loadTexture("resources/testikartta.png");
-	state.map = map;
+	if (time_since_tick < 1/TICKRATE)
+	{
+		return true;
+	} else {
+		time_since_tick = 0;
+	}
+
+	snake.dir = new_dir;
+	Vec2 next_head = snake.body[0];
+	switch (snake.dir)
+	{
+		case UP:
+			next_head.y -= 1;
+			if (next_head.y < 0) next_head.y = CELLCOUNT-1;
+		case DOWN:
+			next_head.y += 1;
+			if (next_head.y == CELLCOUNT) next_head.y = 0;
+		case LEFT:
+			next_head.x -= 1;
+			if (next_head.x < 0) next_head.x = CELLCOUNT-1;
+		case RIGHT:
+			next_head.x += 1;
+			if (next_head.x == CELLCOUNT) next_head.x = 0;
+	}
+
+
+	snake.body.push_front(next_head);
+	if (next_head != food.pos) 
+	{
+		snake.body.pop()!!;
+	} else {
+		while (food.pos == next_head)
+		{
+			food.pos = {rand(CELLCOUNT-1), rand(CELLCOUNT-1)};
+			food.index = rand(4);
+		}
+	}
+
+	// Tarkasta, osuuko käärmeen pää johonkin ruumiin osaan
+	foreach (index, body_segment : snake.body)
+	{
+		if (index == 0) continue;
+		if (body_segment == snake.body[0]) // jos osan sijainti on sama kuin pään sijainti
+		{
+			return false; // Käärme törmäsi itseensä -> palauta false -> peli loppuu
+		}
+	}
+	return true;
 }
 
-/*
-Päivitetään pelin tila. Tämä suoritetaan siis kerran per frame.
-*/
-fn void update()
-{
-    /*
-    Delta time eli "dt" on viime framesta kulunut aika sekunneissa.
-    Tätä käytetään laskuissa, joissa täytyy ottaa huomioon pelin FPS.
-    Näin varmistutaan siitä, että esim. fysiikka toimii samalla tavalla
-    riippumatta pelin frameratesta.
-    */
-    float dt = rl::getFrameTime();
-
-    Player* p = &state.player; // Alias pelaajasta. Pelkkä tyyliseikka.
-
-    /*
-    Liikutellaan pelaajaa 
-    */
-	if (rl::isKeyDown(rl::KEY_W)) p.position.y  -= dt * p.speed;
-	if (rl::isKeyDown(rl::KEY_S)) p.position.y  += dt * p.speed;
-	if (rl::isKeyDown(rl::KEY_A)) p.position.x  -= dt * p.speed;
-	if (rl::isKeyDown(rl::KEY_D)) p.position.x  += dt * p.speed;
-}
-
-/*
-Piirretään frame pelin tilasta. Tämä tehdään kerran per frame.
-*/
-fn void draw() 
+fn void draw(Snake snake, Assets assets)
 {
 	rl::beginDrawing();
+	rl::clearBackground(rl::GRAY);
 
-    // defer tarkoittaa, että koodi ajetaan nykyisen scopen lopussa.
-    defer rl::endDrawing();
+	for (int i = 0; i < CELLCOUNT; i += 2)
+	{
+		for (int j = 0; j < CELLCOUNT; j += 2)
+		{
+			rl::drawTexture(
+				assets.tile,
+				i * CELLSIZE, 
+				j * CELLSIZE,
+				rl::WHITE
+			);
+		}
+	}
 
-    rl::clearBackground({25, 25, 25, 255}); // RGBA-arvo taustavärille
+	// Piirretään käärme
+	foreach (index, body_segment : snake.body)
+	{
+		rl::Color color = rl::GREEN;
+		if (index == 0) color = rl::RED;
 
-	// Kartan piirtäminen
-	Rectangle src = {state.player.position.x, state.player.position.y, SCREENW, SCREENH};
-    rl::drawTextureRec(state.map, src, {0, 0}, rl::WHITE);
+		rl::drawRectangle(
+			body_segment.x * CELLSIZE,
+			body_segment.y * CELLSIZE,
+			CELLSIZE,
+			CELLSIZE,
+			color
+		);
+	}
 
-    /*
-    Alias pelaajan paikasta. Tällä kertaa tyyppi on arvo eikä pointteri,
-    sillä meidän ei tarvitse muuttaa pelaajan paikkaa, haluamme vain tietää sen.
-    */
-
-    // Piirretään punainen ympyrä pelaajan paikalle
-    rl::drawCircle(
-		SCREENW/2,
-		SCREENH/2,
-        20,
-        rl::RED
-    );
-    
-    rl::drawFPS(20, 20);
-}
-
-
-// Suoritetaan kerran ohjelman lopussa
-fn void exit()
-{
-	rl::closeWindow();
+	float offset = CELLSIZE * 1/2;
+	rl::drawTextureEx(
+		assets.fruits[food.index],
+		{(float)food.pos.x * CELLSIZE-offset, (float)food.pos.y * CELLSIZE-offset},
+		0, 2,
+		rl::WHITE
+	);
+	rl::drawFPS(10, 10);
+	rl::endDrawing();
 }
